@@ -1,0 +1,28 @@
+[package]
+name = "fundwave"
+version = "0.1.0"
+edition = "2021"
+description = "FundWave: a crowdfunding smart contract for Stellar / Soroban"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = []
+testutils = ["soroban-sdk/testutils"]
+
+[dependencies]
+soroban-sdk = "22.0.7"
+
+[dev-dependencies]
+soroban-sdk = { version = "22.0.7", features = ["testutils"] }
+rand = "0.8"
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = false
+strip = true
+lto = true
