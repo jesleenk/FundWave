@@ -1,0 +1,17 @@
+{
+  "name": "fundwave",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FundWave monorepo: Stellar (Soroban) contracts + Next.js frontend.",
+  "scripts": {
+    "build": "pnpm --filter fundwave-web build",
+    "dev": "pnpm --filter fundwave-web dev",
+    "start": "pnpm --filter fundwave-web start",
+    "lint": "pnpm --filter fundwave-web lint",
+    "typecheck": "pnpm --filter fundwave-web typecheck",
+    "deploy": "bash scripts/deploy.sh",
+    "deploy:reset": "bash scripts/deploy.sh --reset",
+    "deploy:futurenet": "bash scripts/deploy.sh --network futurenet"
+  },
+  "packageManager": "pnpm@9.0.0"
+}
