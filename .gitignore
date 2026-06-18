@@ -1,0 +1,17 @@
+node_modules
+.pnpm-store
+target
+.wasm
+.soroban
+.DS_Store
+.env
+.env.local
+*.log
+dist
+.next
+out
+
+# tsbuildinfo
+*.tsbuildinfo
+# soroban test snapshots (regenerated on test)
+contracts/**/test_snapshots/
