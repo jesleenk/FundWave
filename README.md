@@ -1,4 +1,4 @@
-<img width="2032" height="1161" alt="image" src="https://github.com/user-attachments/assets/49db2fc7-8fcf-48b3-952d-9fa261dbc355" /># FundWave
+# FundWave
 
 FundWave is a mini end-to-end Stellar + Soroban dApp: a crowdfunding / donation platform backed by a deployed Soroban smart contract on Stellar Testnet, with live progress driven by periodic on-chain reads, transaction lifecycle feedback, and a clean Next.js 16 / React 19 frontend.
 
@@ -67,7 +67,8 @@ This project demonstrates:
 ## Mobile responsive screenshot
 
 <div align="center">
-<em>Replace with: a phone-width screenshot (≈ 389 × 700) of the home feed captured from the browser dev tools or a real device.</em>
+<em><img width="2032" height="1161" alt="image" src="https://github.com/user-attachments/assets/2e3f049c-afaf-4809-bc2d-e8f0931ca5a2" />
+</em>
 </div>
 
 ## Deployed Contract
