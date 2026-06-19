@@ -87,7 +87,7 @@ This project demonstrates:
 - **Deployed at:** `2026-06-18T18:16:19Z`
 - **Stellar Expert (deploy):** <https://stellar.expert/explorer/testnet/tx/201be1af44c26023d7b6ff52c831b7992e4c7b321d3248de30c66ad6157a15af>
 
-Full deployment record (tx hashes, WASM hash, source account, timestamps) lives in [`.soroban/deployments.json`](.soroban/deployments.json) and is refreshed by `pnpm deploy`.
+Full deployment record (tx hashes, WASM hash, source account, timestamps) lives in [`.soroban/deployments.json`](.soroban/deployments.json) and is refreshed by `npm run deploy`.
 
 ## Live Demo
 
@@ -107,7 +107,7 @@ Run all commands from the **repo root** unless stated otherwise.
 
    ```bash
    cd web
-   pnpm install
+   npm install
    ```
 
 3. Build the Soroban contract (produces `contracts/fundwave/target/wasm32-unknown-unknown/release/fundwave.wasm`):
@@ -121,20 +121,20 @@ Run all commands from the **repo root** unless stated otherwise.
 
    ```bash
    cd ../..
-   pnpm deploy            # alias: ./scripts/deploy.sh
+   npm run deploy            # alias: ./scripts/deploy.sh
    ```
 
 5. Start the frontend:
 
    ```bash
    cd web
-   pnpm dev
+   npm run dev
    ```
 
 6. Build for production:
 
    ```bash
-   pnpm build
+   npm run build
    ```
 
 Open <http://localhost:3000>.
@@ -177,14 +177,14 @@ NEXT_PUBLIC_TOKEN_ADDRESS=CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCY
 
 Run from the **repo root**:
 
-- `pnpm dev` — start the Next.js dev server
-- `pnpm build` — production build of the web app
-- `pnpm start` — start the built Next.js server
-- `pnpm lint` — run ESLint on the web app
-- `pnpm typecheck` — run `tsc --noEmit` on the web app
-- `pnpm deploy` — build + deploy the Soroban contract to testnet
-- `pnpm deploy:reset` — deploy and then call `init()` / a post-deploy invoke
-- `pnpm deploy:futurenet` — deploy to futurenet
+- `npm run dev` — start the Next.js dev server
+- `npm run build` — production build of the web app
+- `npm run start` — start the built Next.js server
+- `npm run lint` — run ESLint on the web app
+- `npm run typecheck` — run `tsc --noEmit` on the web app
+- `npm run deploy` — build + deploy the Soroban contract to testnet
+- `npm run deploy:reset` — deploy and then call `init()` / a post-deploy invoke
+- `npm run deploy:futurenet` — deploy to futurenet
 - `cargo test --locked` (inside `contracts/fundwave/`) — run the contract unit tests
 - `cargo build --release --target wasm32-unknown-unknown` (inside `contracts/fundwave/`) — build the contract WASM
 
@@ -193,7 +193,7 @@ Run from the **repo root**:
 This is a standard Next.js 16 build.
 
 - **Node.js:** `^20.19.0` or `>=22.12.0` (Next 16 requirement)
-- **Build command:** `pnpm --filter fundwave-web build`
+- **Build command:** `npm --prefix web run build`
 - **Output directory:** `.next` (Next.js default; Vercel picks this up automatically)
 - **Env vars:** set the three `NEXT_PUBLIC_*` vars from the section above (at minimum `NEXT_PUBLIC_CONTRACT_ID` if you deploy a new contract)
 
@@ -231,7 +231,7 @@ fundwave/
 
 GitHub Actions runs on every push / PR to `main`:
 
-- `web`: `pnpm install --frozen-lockfile` → `pnpm typecheck` → `pnpm lint` → `pnpm build`
+- `web`: `npm ci` → `npm run typecheck` → `npm run lint` → `npm run build`
 - `contract`: `cargo test --locked` → `cargo build --release --target wasm32-unknown-unknown` → upload the WASM artifact
 
 See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
