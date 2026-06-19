@@ -59,7 +59,8 @@ This project demonstrates:
     </td>
     <td align="center" width="50%">
       <strong>✅ CI Results</strong><br/><br/>
-      <em>Replace with: green GitHub Actions run for `web (typecheck + lint + build)` and `contract (build + test)`</em>
+      <em>![Uploading image.png…]()
+</em>
     </td>
   </tr>
 </table>
