@@ -42,17 +42,20 @@ This project demonstrates:
   <tr>
     <td align="center" width="50%">
       <strong>🏠 Home Feed</strong><br/><br/>
-      <em>Replace with: home feed showing live campaign list and progress bars</em>
+      <em><img width="2032" height="1161" alt="2026-06-19_08-57-42" src="https://github.com/user-attachments/assets/f1eab0bd-8d01-4f69-94e3-ac7185000251" />
+</em>
     </td>
     <td align="center" width="50%">
-      <strong>📝 Create Campaign</strong><br/><br/>
-      <em>Replace with: create-campaign modal with goal, deadline, description</em>
+      <strong>📝 Stellar Wallet Kit</strong><br/><br/>
+      <em><img width="1877" height="1006" alt="2026-06-19_08-31-14" src="https://github.com/user-attachments/assets/6857daf7-a1cf-499e-8f3c-b5fced4b5009" />
+</em>
     </td>
   </tr>
   <tr>
     <td align="center" width="50%">
       <strong>💸 Donate</strong><br/><br/>
-      <em>Replace with: donate modal showing transaction status (preparing → awaiting-signature → pending → success)</em>
+      <em><img width="1877" height="1006" alt="2026-06-19_08-31-14" src="https://github.com/user-attachments/assets/c5299192-53b4-4a1f-aa85-04f572c40cc7" />
+</em>
     </td>
     <td align="center" width="50%">
       <strong>✅ CI Results</strong><br/><br/>
