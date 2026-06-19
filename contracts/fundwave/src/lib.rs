@@ -1,25 +1,65 @@
 //! FundWave — a minimal but complete crowdfunding contract for Stellar / Soroban.
 //!
-//! Storage layout:
-//!   Campaign(id)        -> Campaign
-//!   NextId              -> u64
-//!   DonorBal(id, donor) -> i128   (cumulative amount donated by `donor`)
-//!   DonorCount(id)      -> u32    (number of distinct donors)
-//!   DonorIdx(id, idx)   -> Address
+//! Modeled on the official Soroban examples (auth, single_offer, storage) and
+//! the Stellar developer documentation. The contract follows these rules:
+//!
+//! - The creator of a campaign is also the recipient of the raised funds.
+//!   There is no separate `beneficiary`; the goal is to keep the on-chain
+//!   surface small and the UX simple.
+//! - All token operations use the standard `token::Client` interface
+//!   (https://developers.stellar.org/docs/tokens/token-interface).
+//! - Authorization is enforced with `Address::require_auth()` per the
+//!   authorization guide:
+//!   https://developers.stellar.org/docs/build/smart-contracts/conventions/auth
+//! - Storage is keyed through a single `DataKey` enum (the convention shown
+//!   in the official `auth` and `single_offer` examples) and persistent
+//!   entries are given a generous TTL on every write so the data outlives
+//!   the typical Soroban restore window.
 //!
 //! Lifecycle of a campaign:
-//!   Active  -> if goal met at any point        -> Successful
-//!   Active  -> if deadline passed and goal NOT met -> Failed
-//!   Successful -> creator may `withdraw`
-//!   Failed     -> donors may `refund`
+//!   Active  -> if goal met at any point              -> Successful
+//!   Active  -> if deadline passed and goal NOT met   -> Failed
+//!   Successful -> creator may `withdraw` (paid in the campaign's token)
+//!   Failed     -> donors may `refund` (paid back in the campaign's token)
 
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype,
-    token::TokenClient,
-    Address, Env, String, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, token, Address, Env,
+    String, Symbol, Vec,
 };
+
+// ---------------- errors ----------------
+
+#[contracterror]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum Error {
+    GoalMustBePositive = 1,
+    DeadlineInPast = 2,
+    AmountMustBePositive = 3,
+    CampaignNotFound = 4,
+    CampaignNotActive = 5,
+    DeadlinePassed = 6,
+    NotCreator = 7,
+    NotFailed = 8,
+    NothingToRefund = 9,
+}
+
+// ---------------- storage layout ----------------
+
+#[contracttype]
+#[derive(Clone)]
+pub enum DataKey {
+    /// Monotonically increasing id assigned to the next `create_campaign`.
+    NextId,
+    /// Campaign by id.
+    Campaign(u64),
+    /// Per-donor contribution to a campaign, used for refunds.
+    Donor(u64, Address),
+}
+
+// ---------------- domain types ----------------
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -35,7 +75,6 @@ pub enum CampaignStatus {
 pub struct Campaign {
     pub id: u64,
     pub creator: Address,
-    pub beneficiary: Address,
     pub token: Address,
     pub goal: i128,
     pub raised: i128,
@@ -52,53 +91,51 @@ pub struct Fundwave;
 
 #[contractimpl]
 impl Fundwave {
-    /// Initialize the contract. Id counter starts at 1.
+    /// Optional initializer. The contract lazily initializes the id counter
+    /// on the first `create_campaign`, so this is a no-op for new
+    /// deployments and remains only for backward compatibility with the
+    /// deploy script's `--reset` flag.
     pub fn init(env: Env) {
-        if !env
-            .storage()
-            .instance()
-            .has(&Symbol::new(&env, "NextId"))
-        {
-            env.storage()
-                .instance()
-                .set(&Symbol::new(&env, "NextId"), &1u64);
+        if !env.storage().instance().has(&DataKey::NextId) {
+            env.storage().instance().set(&DataKey::NextId, &1u64);
         }
     }
 
-    /// Create a new campaign. Returns the new campaign id.
-    #[allow(clippy::too_many_arguments)]
+    /// Create a new campaign. The caller (`creator`) is also the recipient
+    /// of the raised funds — there is no separate beneficiary. Returns the
+    /// new campaign id (starting at 1).
     pub fn create_campaign(
         env: Env,
         creator: Address,
-        beneficiary: Address,
         token: Address,
         goal: i128,
         deadline: u64,
         title: String,
         description: String,
     ) -> u64 {
+        // The creator must authorize the create call.
         creator.require_auth();
+
         if goal <= 0 {
-            panic!("goal must be > 0");
+            panic_with_error!(&env, Error::GoalMustBePositive);
         }
         if deadline <= env.ledger().timestamp() {
-            panic!("deadline must be in the future");
+            panic_with_error!(&env, Error::DeadlineInPast);
         }
 
+        // Lazily initialize the id counter; otherwise bump it.
         let next_id: u64 = env
             .storage()
             .instance()
-            .get(&Symbol::new(&env, "NextId"))
+            .get(&DataKey::NextId)
             .unwrap_or(1u64);
-        let id = next_id;
         env.storage()
             .instance()
-            .set(&Symbol::new(&env, "NextId"), &(next_id + 1));
+            .set(&DataKey::NextId, &(next_id + 1));
 
         let campaign = Campaign {
-            id,
+            id: next_id,
             creator: creator.clone(),
-            beneficiary,
             token,
             goal,
             raised: 0,
@@ -109,212 +146,163 @@ impl Fundwave {
         };
         env.storage()
             .persistent()
-            .set(&campaign_key(&env, id), &campaign);
-        env.storage()
-            .persistent()
-            .extend_ttl(&campaign_key(&env, id), 100_000, 200_000);
+            .set(&DataKey::Campaign(next_id), &campaign);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Campaign(next_id),
+            100_000,
+            200_000,
+        );
 
         // event: campaign_created(id, creator, goal, deadline)
-        let topics: Vec<Symbol> = Vec::from_array(
-            &env,
-            [
-                Symbol::new(&env, "campaign_created"),
-                Symbol::new(&env, "id"),
-            ],
-        );
         env.events().publish(
-            topics,
-            (id, creator, goal, deadline),
+            (Symbol::new(&env, "campaign_created"),),
+            (next_id, creator, goal, deadline),
         );
 
-        id
+        next_id
     }
 
-    /// Donate `amount` of `token` to campaign `id` from `donor`.
+    /// Donate `amount` of the campaign's token to campaign `id`.
+    /// Anyone may donate; the donor must authorize the call.
     pub fn donate(env: Env, id: u64, donor: Address, amount: i128) {
         if amount <= 0 {
-            panic!("amount must be > 0");
+            panic_with_error!(&env, Error::AmountMustBePositive);
         }
         donor.require_auth();
 
         let mut campaign = load_campaign(&env, id);
-        if !matches!(campaign.status, CampaignStatus::Active) {
-            panic!("campaign is not active");
+
+        if campaign.status != CampaignStatus::Active {
+            panic_with_error!(&env, Error::CampaignNotActive);
         }
         if env.ledger().timestamp() > campaign.deadline {
-            panic!("campaign deadline passed");
+            panic_with_error!(&env, Error::DeadlinePassed);
         }
 
-        // Transfer tokens from donor to this contract.
-        let token_client = TokenClient::new(&env, &campaign.token);
+        // Move tokens from the donor to this contract.
+        let token_client = token::Client::new(&env, &campaign.token);
         token_client.transfer(&donor, &env.current_contract_address(), &amount);
 
         campaign.raised = campaign.raised.saturating_add(amount);
+        if campaign.raised >= campaign.goal {
+            campaign.status = CampaignStatus::Successful;
+        }
+
         env.storage()
             .persistent()
-            .set(&campaign_key(&env, id), &campaign);
+            .set(&DataKey::Campaign(id), &campaign);
         env.storage()
             .persistent()
-            .extend_ttl(&campaign_key(&env, id), 100_000, 200_000);
+            .extend_ttl(&DataKey::Campaign(id), 100_000, 200_000);
 
         // Track per-donor contribution for refunds.
-        let donor_key = donor_balance_key(&env, id, &donor);
-        let prev: i128 = env.storage().persistent().get(&donor_key).unwrap_or(0i128);
-        if prev == 0 {
-            let count_key = donor_count_key(&env, id);
-            let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0u32);
-            env.storage()
-                .persistent()
-                .set(&donor_index_key(&env, id, count), &donor);
-            env.storage().persistent().set(&count_key, &(count + 1));
-        }
-        env.storage()
-            .persistent()
-            .set(&donor_key, &(prev + amount));
-        env.storage()
-            .persistent()
-            .extend_ttl(&donor_key, 100_000, 200_000);
+        let key = DataKey::Donor(id, donor.clone());
+        let prev: i128 = env.storage().persistent().get(&key).unwrap_or(0i128);
+        env.storage().persistent().set(&key, &(prev + amount));
+        env.storage().persistent().extend_ttl(&key, 100_000, 200_000);
 
-        // event: donation_made(id, donor, amount, new_total)
-        let topics: Vec<Symbol> = Vec::from_array(
-            &env,
-            [
-                Symbol::new(&env, "donation_made"),
-                Symbol::new(&env, "id"),
-            ],
+        // event: donated(id, donor, amount)
+        env.events().publish(
+            (Symbol::new(&env, "donated"),),
+            (id, donor, amount),
         );
-        env.events()
-            .publish(topics, (id, donor.clone(), amount, campaign.raised));
-
-        // Auto-finalize if goal is reached.
-        if campaign.raised >= campaign.goal {
-            campaign.status = CampaignStatus::Successful;
-            env.storage()
-                .persistent()
-                .set(&campaign_key(&env, id), &campaign);
-            let topics: Vec<Symbol> = Vec::from_array(
-                &env,
-                [
-                    Symbol::new(&env, "campaign_finalized"),
-                    Symbol::new(&env, "id"),
-                ],
-            );
-            env.events()
-                .publish(topics, (id, true));
-        }
     }
 
-    /// Finalize a campaign after its deadline has passed.
+    /// Close the campaign if the deadline has passed without reaching the
+    /// goal. Anyone may call this once the deadline has elapsed.
     pub fn finalize(env: Env, id: u64) {
         let mut campaign = load_campaign(&env, id);
-        if matches!(campaign.status, CampaignStatus::Withdrawn) {
-            panic!("already withdrawn");
-        }
-        if env.ledger().timestamp() <= campaign.deadline {
-            panic!("deadline not reached");
-        }
-        if matches!(
-            campaign.status,
-            CampaignStatus::Successful | CampaignStatus::Failed
-        ) {
+        if campaign.status != CampaignStatus::Active {
+            // Already finalized — silently no-op.
             return;
         }
-
-        if campaign.raised >= campaign.goal {
-            campaign.status = CampaignStatus::Successful;
-        } else {
-            campaign.status = CampaignStatus::Failed;
+        if env.ledger().timestamp() <= campaign.deadline {
+            panic_with_error!(&env, Error::DeadlineInPast);
         }
+        campaign.status = CampaignStatus::Failed;
         env.storage()
             .persistent()
-            .set(&campaign_key(&env, id), &campaign);
-
-        let topics: Vec<Symbol> = Vec::from_array(
-            &env,
-            [
-                Symbol::new(&env, "campaign_finalized"),
-                Symbol::new(&env, "id"),
-            ],
-        );
-        env.events()
-            .publish(topics, (id, campaign.raised >= campaign.goal));
+            .set(&DataKey::Campaign(id), &campaign);
     }
 
-    /// Creator withdraws raised funds once the campaign succeeded.
+    /// Withdraw the raised funds to the creator. Only callable by the
+    /// creator, and only after the campaign became `Successful`.
     pub fn withdraw(env: Env, id: u64) {
         let mut campaign = load_campaign(&env, id);
-        if matches!(campaign.status, CampaignStatus::Active) {
-            if env.ledger().timestamp() > campaign.deadline
-                && campaign.raised < campaign.goal
-            {
-                campaign.status = CampaignStatus::Failed;
-                env.storage()
-                    .persistent()
-                    .set(&campaign_key(&env, id), &campaign);
-            }
-        }
-        if !matches!(campaign.status, CampaignStatus::Successful) {
-            panic!("campaign not successful");
-        }
         campaign.creator.require_auth();
 
+        // Lazily mark a successful campaign once the goal is met. This
+        // covers the case where a donation pushed the campaign over the
+        // line but the donor-side status update was on an older code path.
+        if campaign.status == CampaignStatus::Active
+            && campaign.raised >= campaign.goal
+        {
+            campaign.status = CampaignStatus::Successful;
+        }
+        if campaign.status != CampaignStatus::Successful {
+            panic_with_error!(&env, Error::CampaignNotActive);
+        }
         let amount = campaign.raised;
-        let token_client = TokenClient::new(&env, &campaign.token);
+        if amount <= 0 {
+            panic_with_error!(&env, Error::NothingToRefund);
+        }
+
+        let token_client = token::Client::new(&env, &campaign.token);
         token_client.transfer(
             &env.current_contract_address(),
-            &campaign.beneficiary,
+            &campaign.creator,
             &amount,
         );
 
-        campaign.status = CampaignStatus::Withdrawn;
         campaign.raised = 0;
+        campaign.status = CampaignStatus::Withdrawn;
         env.storage()
             .persistent()
-            .set(&campaign_key(&env, id), &campaign);
+            .set(&DataKey::Campaign(id), &campaign);
 
-        let topics: Vec<Symbol> = Vec::from_array(
-            &env,
-            [Symbol::new(&env, "withdrawal"), Symbol::new(&env, "id")],
+        // event: withdrawn(id, creator, amount)
+        env.events().publish(
+            (Symbol::new(&env, "withdrawn"),),
+            (id, campaign.creator, amount),
         );
-        env.events()
-            .publish(topics, (id, campaign.beneficiary.clone(), amount));
     }
 
-    /// Donor claims a refund on a Failed campaign.
+    /// Refund a donor's contribution. Callable only when the campaign
+    /// ended in `Failed` status. Each donor may refund once, up to the
+    /// amount they contributed.
     pub fn refund(env: Env, id: u64, donor: Address) {
         donor.require_auth();
         let campaign = load_campaign(&env, id);
-        if !matches!(campaign.status, CampaignStatus::Failed) {
-            panic!("refunds only available for failed campaigns");
+        if campaign.status != CampaignStatus::Failed {
+            panic_with_error!(&env, Error::NotFailed);
         }
-        let donor_key = donor_balance_key(&env, id, &donor);
-        let amount: i128 = env.storage().persistent().get(&donor_key).unwrap_or(0i128);
+        let key = DataKey::Donor(id, donor.clone());
+        let amount: i128 = env.storage().persistent().get(&key).unwrap_or(0i128);
         if amount <= 0 {
-            panic!("nothing to refund");
+            panic_with_error!(&env, Error::NothingToRefund);
         }
 
-        let token_client = TokenClient::new(&env, &campaign.token);
+        let token_client = token::Client::new(&env, &campaign.token);
         token_client.transfer(&env.current_contract_address(), &donor, &amount);
-        env.storage().persistent().remove(&donor_key);
+        env.storage().persistent().set(&key, &0i128);
 
-        let topics: Vec<Symbol> = Vec::from_array(
-            &env,
-            [Symbol::new(&env, "refund_issued"), Symbol::new(&env, "id")],
+        // event: refunded(id, donor, amount)
+        env.events().publish(
+            (Symbol::new(&env, "refunded"),),
+            (id, donor, amount),
         );
-        env.events()
-            .publish(topics, (id, donor.clone(), amount));
     }
 
     // ---------------- views ----------------
 
     pub fn get_campaign(env: Env, id: u64) -> Option<Campaign> {
-        env.storage().persistent().get(&campaign_key(&env, id))
+        env.storage().persistent().get(&DataKey::Campaign(id))
     }
 
     pub fn donor_balance(env: Env, id: u64, donor: Address) -> i128 {
         env.storage()
             .persistent()
-            .get(&donor_balance_key(&env, id, &donor))
+            .get(&DataKey::Donor(id, donor))
             .unwrap_or(0i128)
     }
 
@@ -322,7 +310,7 @@ impl Fundwave {
         let next_id: u64 = env
             .storage()
             .instance()
-            .get(&Symbol::new(&env, "NextId"))
+            .get(&DataKey::NextId)
             .unwrap_or(1u64);
         let mut out: Vec<Campaign> = Vec::new(&env);
         let end = core::cmp::min(next_id, from.saturating_add(limit as u64));
@@ -331,7 +319,7 @@ impl Fundwave {
             if let Some(c) = env
                 .storage()
                 .persistent()
-                .get::<_, Campaign>(&campaign_key(&env, i))
+                .get::<_, Campaign>(&DataKey::Campaign(i))
             {
                 out.push_back(c);
             }
@@ -341,29 +329,11 @@ impl Fundwave {
     }
 }
 
-// ---------------- helpers ----------------
-
-fn campaign_key(env: &Env, id: u64) -> (Symbol, u64) {
-    (Symbol::new(env, "Campaign"), id)
-}
-
-fn donor_balance_key(env: &Env, id: u64, donor: &Address) -> (Symbol, u64, Address) {
-    (Symbol::new(env, "DonorBal"), id, donor.clone())
-}
-
-fn donor_count_key(env: &Env, id: u64) -> (Symbol, u64) {
-    (Symbol::new(env, "DonorCount"), id)
-}
-
-fn donor_index_key(env: &Env, id: u64, idx: u32) -> (Symbol, u64, u32) {
-    (Symbol::new(env, "DonorIdx"), id, idx)
-}
-
 fn load_campaign(env: &Env, id: u64) -> Campaign {
     env.storage()
         .persistent()
-        .get(&campaign_key(env, id))
-        .unwrap_or_else(|| panic!("campaign not found"))
+        .get(&DataKey::Campaign(id))
+        .unwrap_or_else(|| panic_with_error!(env, Error::CampaignNotFound))
 }
 
 // ---------------- tests ----------------
@@ -403,10 +373,7 @@ mod test {
         admin_client.mint(&donor1, &1_000);
         admin_client.mint(&donor2, &4_000);
 
-        client.init();
-
         let id = client.create_campaign(
-            &creator,
             &creator,
             &token_addr,
             &500i128,
@@ -423,6 +390,7 @@ mod test {
         assert_eq!(c.raised, 500);
         assert_eq!(c.status, CampaignStatus::Successful);
 
+        // The creator is the recipient.
         client.withdraw(&id);
         let c2 = client.get_campaign(&id).unwrap();
         assert_eq!(c2.status, CampaignStatus::Withdrawn);
@@ -444,10 +412,7 @@ mod test {
         let (token_addr, token_client, admin_client) = create_token(&env, &admin);
         admin_client.mint(&donor, &1_000);
 
-        client.init();
-
         let id = client.create_campaign(
-            &creator,
             &creator,
             &token_addr,
             &10_000i128,
@@ -466,4 +431,5 @@ mod test {
         client.refund(&id, &donor);
         assert_eq!(token_client.balance(&donor), 1_000);
     }
+
 }

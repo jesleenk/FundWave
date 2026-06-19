@@ -19,6 +19,7 @@ import {
   Networks,
   type ISupportedWallet,
 } from "@creit.tech/stellar-wallets-kit";
+import { defaultModules } from "@creit.tech/stellar-wallets-kit/modules/utils";
 import { NETWORK } from "./network";
 
 interface WalletState {
@@ -58,7 +59,7 @@ function ensureInit() {
   if (_initialized) return;
   StellarWalletsKit.init({
     network: networkConst(),
-    modules: [],
+    modules: defaultModules(),
   });
   _initialized = true;
 }

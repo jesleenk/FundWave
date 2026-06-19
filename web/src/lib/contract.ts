@@ -21,8 +21,6 @@ export type CampaignStatus = "Active" | "Successful" | "Failed" | "Withdrawn";
 export interface Campaign {
   id: number;
   creator: string;
-  beneficiary: string;
-  token: string;
   goal: string;       // raw i128 as string to avoid BigInt serialization
   raised: string;
   deadline: number;   // unix seconds
@@ -73,14 +71,13 @@ function strScVal(s: string) {
   return nativeToScVal(s, { type: "string" });
 }
 
+// `raw` is already a native JS value produced by `scValToNative`: a plain
+// object for a ScvMap (Campaign struct) or one element of a ScvVec.
 function decodeCampaign(raw: unknown): Campaign {
-  // Soroban returns a Map of named fields. `scValToNative` gives a plain object.
-  const c = scValToNative(raw as xdr.ScVal) as Record<string, unknown>;
+  const c = raw as Record<string, unknown>;
   return {
     id: Number(c.id),
     creator: String(c.creator),
-    beneficiary: String(c.beneficiary),
-    token: String(c.token),
     goal: String(c.goal),
     raised: String(c.raised),
     deadline: Number(c.deadline),
@@ -180,12 +177,13 @@ export async function getCampaign(id: number): Promise<Campaign | null> {
       "get_campaign",
       [u64ScVal(id)],
     );
-    const v = res.result.retval;
-    // Option<Campaign> -> ScVal.switch() returns a Discriminant object
-    // The discriminant's `.name` is a string like "scvVoid" / "scvSome".
-    const sw = v.switch() as unknown as { name: string };
-    if (sw.name === "scvVoid") return null;
-    return decodeCampaign(v);
+    // scValToNative converts ScvVoid -> null, ScvSome(T) -> T, and maps
+    // (Vec, Map) to (Array, Object). It does not call `.switch()` on the
+    // xdr value, so it works across SDK versions where ScVal is exposed
+    // as a different class shape.
+    const native = scValToNative(res.result.retval);
+    if (native == null) return null;
+    return decodeCampaign(native);
   } catch {
     return null;
   }
@@ -204,8 +202,6 @@ export async function getDonorBalance(id: number, donor: string): Promise<string
 export async function createCampaign(
   p: {
     creator: string;
-    beneficiary: string;
-    token: string;
     goal: string;
     deadlineUnix: number;
     title: string;
@@ -217,8 +213,7 @@ export async function createCampaign(
     "create_campaign",
     [
       addrScVal(p.creator),
-      addrScVal(p.beneficiary),
-      addrScVal(p.token),
+      addrScVal(defaultToken()),
       i128ScVal(p.goal),
       u64ScVal(p.deadlineUnix),
       strScVal(p.title),

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { createCampaign, defaultToken } from "@/lib/contract";
+import { createCampaign } from "@/lib/contract";
 import { useWallet } from "@/lib/wallet";
 
 const MIN_DEADLINE_DAYS = 1;
@@ -18,7 +18,6 @@ export function CreateForm({ onCreated }: { onCreated: () => void }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [goal, setGoal] = useState("1000");
-  const [token, setToken] = useState(defaultToken());
   const [deadline, setDeadline] = useState(defaultDeadline());
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -45,8 +44,6 @@ export function CreateForm({ onCreated }: { onCreated: () => void }) {
       await createCampaign(
         {
           creator: wallet.publicKey,
-          beneficiary: wallet.publicKey,
-          token,
           goal: goalStroops,
           deadlineUnix: Math.floor(dl.getTime() / 1000),
           title: title.trim(),
@@ -101,16 +98,6 @@ export function CreateForm({ onCreated }: { onCreated: () => void }) {
             value={deadline}
             onChange={(e) => setDeadline(e.target.value)}
             disabled={busy}
-          />
-        </label>
-        <label className="field">
-          <span>Token address (SAC)</span>
-          <input
-            type="text"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            disabled={busy}
-            className="mono"
           />
         </label>
         <label className="field full">

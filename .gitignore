@@ -15,3 +15,10 @@ out
 *.tsbuildinfo
 # soroban test snapshots (regenerated on test)
 contracts/**/test_snapshots/
+
+# stray pnpm workspace lockfile (real one is web/pnpm-lock.yaml)
+/pnpm-lock.yaml
+
+# ad-hoc node probes
+/probe.mjs
+/web/probe.mjs
